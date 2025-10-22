@@ -1,4 +1,6 @@
 import logging
+import os
+import traceback
 from datetime import datetime
 from docx import Document
 from telegram import Update, ReplyKeyboardMarkup, ReplyKeyboardRemove
@@ -12,7 +14,10 @@ from telegram.ext import (
 )
 
 # Включаем логирование
-logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
+logging.basicConfig(
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    level=logging.INFO
+)
 logger = logging.getLogger(__name__)
 
 # Состояния диалога
@@ -51,7 +56,6 @@ async def enter_title(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 # Ввод названия этапа
 async def enter_stage_name(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.effective_user.id
     context.user_data["current_stage"] = {
         "name": update.message.text.strip(),
         "start": "",
@@ -101,7 +105,6 @@ async def enter_activities(update: Update, context: ContextTypes.DEFAULT_TYPE):
     reply_keyboard = [["Добавить ещё этап", "Завершить и экспортировать"]]
     await update.message.reply_text(
         "Этап добавлен! Что дальше?",
- 
         reply_markup=ReplyKeyboardMarkup(reply_keyboard, one_time_keyboard=True)
     )
     return CONFIRM_OR_ADD_MORE
@@ -116,7 +119,7 @@ async def confirm_or_add_more(update: Update, context: ContextTypes.DEFAULT_TYPE
         await export_plan(update, context)
         return ConversationHandler.END
 
-# Экспорт в Word
+# Экспорт в Word с обработкой ошибок
 async def export_plan(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     data = user_data_store.get(user_id)
@@ -124,23 +127,36 @@ async def export_plan(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("Нет данных для экспорта.", reply_markup=ReplyKeyboardRemove())
         return
 
-    doc = Document()
-    doc.add_heading(data["title"], 0)
+    try:
+        doc = Document()
+        doc.add_heading(data["title"], 0)
 
-    for i, stage in enumerate(data["stages"], 1):
-        doc.add_heading(f"Этап {i}: {stage['name']}", level=1)
-        doc.add_paragraph(f"Сроки: с {stage['start']} по {stage['end']}")
-        doc.add_paragraph(f"Цель: {stage['goal']}")
-        doc.add_paragraph(f"Мероприятия: {stage['activities']}")
+        for i, stage in enumerate(data["stages"], 1):
+            doc.add_heading(f"Этап {i}: {stage['name']}", level=1)
+            doc.add_paragraph(f"Сроки: с {stage['start']} по {stage['end']}")
+            doc.add_paragraph(f"Цель: {stage['goal']}")
+            doc.add_paragraph(f"Мероприятия: {stage['activities']}")
 
-    filename = f"Календарно-тактический_план_{user_id}.docx"
-    doc.save(filename)
+        filename = f"Календарно-тактический_план_{user_id}.docx"
+        doc.save(filename)
 
-    await update.message.reply_document(
-        document=open(filename, 'rb'),
-        caption="Ваш календарно-тактический план готов!",
-        reply_markup=ReplyKeyboardRemove()
-    )
+        await update.message.reply_document(
+            document=open(filename, 'rb'),
+            caption="Ваш календарно-тактический план готов!",
+            reply_markup=ReplyKeyboardRemove()
+        )
+
+        # Опционально: удаляем файл после отправки
+        # os.remove(filename)
+
+    except Exception as e:
+        error_msg = f"Ошибка при экспорте: {str(e)}"
+        print(error_msg)
+        traceback.print_exc()
+        await update.message.reply_text(
+            "Произошла ошибка при создании файла. Попробуйте снова.",
+            reply_markup=ReplyKeyboardRemove()
+        )
 
 # Отмена
 async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -149,8 +165,8 @@ async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 # Основная функция
 def main():
-    # Замените 'YOUR_BOT_TOKEN' на токен от @BotFather
-    application = Application.builder().token("8462667131:AAEHt4r18D5MB7mkHERPsiFE6HaxkvV1X5s").build()
+    token = os.environ["BOT_TOKEN"]
+    application = Application.builder().token(token).build()
 
     conv_handler = ConversationHandler(
         entry_points=[CommandHandler("start", start)],
@@ -167,8 +183,6 @@ def main():
     )
 
     application.add_handler(conv_handler)
-
-    # Запуск бота
     application.run_polling()
 
 if __name__ == '__main__':
